@@ -1,0 +1,12 @@
+{
+  "testuser": {
+    "salt": "24de156b44afd2a33a9577b3f8e354ab",
+    "hash": "bebdefe1a9569a886aa9bd76cc5314077cd5b403680629474b59282a9c7f4fef",
+    "full_name": "Test User"
+  },
+  "cli_test": {
+    "salt": "ad46bb6b890abee00e136c9e09e9fb67",
+    "hash": "fd5e73397bf02e940a87bd97571bd423fe456bab46b763be5af82d6fc3ebbcbd",
+    "full_name": "CLI Test"
+  }
+}
