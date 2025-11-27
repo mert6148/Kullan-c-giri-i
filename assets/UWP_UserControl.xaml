@@ -12,5 +12,10 @@
                    HorizontalAlignment="Center" 
                    VerticalAlignment="Center" 
                    FontSize="24"/>
+
+        <link:LinkButton Content="Click Me" 
+                         HorizontalAlignment="Center" 
+                         VerticalAlignment="Bottom" 
+                         Margin="0,0,0,20"/>
     </Grid>
 </UserControl> 
