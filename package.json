@@ -1,18 +1,90 @@
 {
-    "name": "User Login",
-    "version": "1.0.0",
-    "description": "A project related to user input, created with Python and C#.",
-    "main": "print.py",
-    "scripts": {
-        "start": "Python print.py",
-        "test": "jest"
+  "name": "User Login",
+  "version": "1.0.0",
+  "description": "A project related to user input, created with Python and C#.",
+  "main": "print.py",
+  "scripts": {
+    "start": "Python print.py",
+    "test": "jest"
+  },
+  "author": "Nert Doğanay",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.17.1"
+  },
+  "devDependencies": {
+    "jest": "^26.6.3"
+  },
+  "exampleData": {
+    "healthCheck": {
+      "success": true,
+      "status": "ok",
+      "version": "1.0.0"
     },
-    "author": "Nert Doğanay",
-    "license": "MIT",
-    "dependencies": {
-        "express": "^4.17.1"
+    "users": [
+      {"username": "alice", "full_name": "Alice Smith"},
+      {"username": "bob", "full_name": "Bob Johnson"}
+    ],
+    "createUserResponse": {
+      "success": true,
+      "message": "User created"
     },
-    "devDependencies": {
-        "jest": "^26.6.3"
+    "loginResponse": {
+      "success": true,
+      "message": "Login successful",
+      "username": "alice",
+      "session_id": "sess_00123"
+    },
+    "logoutResponse": {
+      "success": true,
+      "message": "Logout successful"
+    },
+    "userAttributes": {
+      "alice": {
+        "role": "admin",
+        "email": "alice@example.com"
+      }
+    },
+    "setAttributeResponse": {
+      "success": true,
+      "message": "Attribute set",
+      "username": "alice",
+      "attribute_name": "department",
+      "attribute_value": "IT"
+    },
+    "sessions": [
+      {"session_id": "sess_00123", "username": "alice"},
+      {"session_id": "sess_00124", "username": "bob"}
+    ],
+    "createSessionResponse": {
+      "success": true,
+      "session_id": "sess_00125",
+      "username": "charlie"
+    },
+    "logs": [
+      {"username": "alice", "action": "login", "timestamp": "2025-11-28T12:00:00Z"},
+      {"username": "bob", "action": "logout", "timestamp": "2025-11-28T12:05:00Z"}
+    ],
+    "rootEndpoint": {
+      "name": "User Login System API",
+      "version": "1.0.0",
+      "endpoints": {
+        "health": "/api/v1/health",
+        "users": "/api/v1/users",
+        "auth": {
+          "login": "POST /api/v1/auth/login",
+          "logout": "POST /api/v1/auth/logout"
+        },
+        "attributes": {
+          "get_all": "GET /api/v1/users/<username>/attributes",
+          "get_one": "GET /api/v1/users/<username>/attributes/<attribute_name>",
+          "set": "POST /api/v1/users/<username>/attributes",
+          "delete": "DELETE /api/v1/users/<username>/attributes/<attribute_name>"
+        },
+        "sessions": "/api/v1/sessions",
+        "logs": "/api/v1/logs"
+      }
     }
+  }
 }
+
