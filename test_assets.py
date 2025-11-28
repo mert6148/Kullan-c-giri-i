@@ -5,13 +5,25 @@ import print as p
 import json
 
 # Import constants from assets module
-if p.ASSETS_AVAILABLE:
-    from assets.assest import (
+try:
+    from assets.asset import (
         ASSET_TYPE_STRING, ASSET_TYPE_INTEGER, ASSET_TYPE_BOOLEAN,
         ASSET_CATEGORY_PROFILE, ASSET_CATEGORY_PREFERENCES, 
         ASSET_CATEGORY_SECURITY, ASSET_CATEGORY_SYSTEM, ASSET_CATEGORY_CUSTOM,
         UserAssetManager
     )
+    ASSETS_AVAILABLE = True
+except ImportError:
+    ASSETS_AVAILABLE = False
+    print("Assets modülü bulunamadı, test bazı özellikler çalışmayabilir.")
+
+
+def build_test_assets(all_assets):
+    """Helper to convert assets to dict."""
+    return {
+        category: {key: value.to_dict() for key, value in assets.items()}
+        for category, assets in all_assets.items()
+    }
 
 
 def test_asset_management():
@@ -44,7 +56,7 @@ def test_asset_management():
     print(f"   Kullanıcı ID: {user_id}\n")
     
     # Initialize asset manager
-    asset_mgr = UserAssetManager(p.DB_FILE) if p.ASSETS_AVAILABLE else None
+    asset_mgr = UserAssetManager(p.DB_FILE) if ASSETS_AVAILABLE else None
     if not asset_mgr:
         print("Hata: Assets modülü mevcut değil!")
         return
@@ -72,19 +84,19 @@ def test_asset_management():
     }
     for attr_name, attr_value in pref_attrs.items():
         asset_type = ASSET_TYPE_INTEGER if isinstance(attr_value, int) else ASSET_TYPE_STRING
-        ok = asset_mgr.set_asset(user_id, attr_name, str(attr_value), 
+        ok = asset_mgr.set_asset(user_id, attr_name, attr_value, 
                                  asset_type, ASSET_CATEGORY_PREFERENCES)
         print(f"   {attr_name}: {'✓' if ok else '✗'}")
     
     # Test 3: Set security attributes
     print("\n4. Güvenlik varlıkları ayarlanıyor...")
     security_attrs = {
-        "two_factor_enabled": "true",
+        "two_factor_enabled": True,
         "last_password_change": "2025-11-20",
     }
     for attr_name, attr_value in security_attrs.items():
-        asset_type = ASSET_TYPE_BOOLEAN if "true" in str(attr_value).lower() else ASSET_TYPE_STRING
-        ok = asset_mgr.set_asset(user_id, attr_name, str(attr_value), 
+        asset_type = ASSET_TYPE_BOOLEAN if isinstance(attr_value, bool) else ASSET_TYPE_STRING
+        ok = asset_mgr.set_asset(user_id, attr_name, attr_value, 
                                  asset_type, ASSET_CATEGORY_SECURITY)
         print(f"   {attr_name}: {'✓' if ok else '✗'}")
     
@@ -96,7 +108,7 @@ def test_asset_management():
     }
     for attr_name, attr_value in system_attrs.items():
         asset_type = ASSET_TYPE_INTEGER if isinstance(attr_value, int) else ASSET_TYPE_STRING
-        ok = asset_mgr.set_asset(user_id, attr_name, str(attr_value), 
+        ok = asset_mgr.set_asset(user_id, attr_name, attr_value, 
                                  asset_type, ASSET_CATEGORY_SYSTEM)
         print(f"   {attr_name}: {'✓' if ok else '✗'}")
     
@@ -134,27 +146,13 @@ def test_asset_management():
     all_assets = asset_mgr.get_all_assets(user_id)
     total_count = sum(len(assets) for assets in all_assets.values())
     print(f"    Toplam varlık sayısı: {total_count}")
-    print("\n=== Test Tamamlandı ===")
     
     # Display formatted JSON
     print("\n=== Tüm Varlıklar (JSON Formatı) ===")
-    display_dict = {
-        cat: {k: v.to_dict() for k, v in assets.items()}
-        for cat, assets in all_assets.items()
-    }
+    display_dict = build_test_assets(all_assets)
     print(json.dumps(display_dict, ensure_ascii=False, indent=2))
     
-    def build_test_assets(all_assets):
-    return {
-        category: {
-            key: value.to_dict()
-            for key, value in assets.items()
-        }
-        for category, assets in all_assets.items()
-    }
-    
     print("\n11. Test kullanıcısı siliniyor...")
-    test_assets = build_test_assets(all_assets)
     print("test_assets oluşturuldu.")
 
 
