@@ -45,6 +45,8 @@ namespace UserLogin.Assets
                 MetadataReference.CreateFromFile(typeof(object).Assembly.Location),
                 MetadataReference.CreateFromFile(typeof(Console).Assembly.Location),
                 MetadataReference.CreateFromFile(typeof(Enumerable).Assembly.Location),
+                // Add MySQL reference
+                MetadataReference.CreateFromFile(typeof(MySql.Data.MySqlClient.MySqlConnection).Assembly.Location)
             };
 
             var compilation = CSharpCompilation.Create(
