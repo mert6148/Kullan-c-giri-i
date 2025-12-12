@@ -93,6 +93,13 @@ if ($status) {
     if ($LASTEXITCODE -ne 0) { Write-ErrExit "git commit failed" }
 }
 
+# Ensure local branch exists; create from current HEAD if needed
+git rev-parse --verify $Branch 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Local branch $Branch not found, creating from current HEAD..."
+    git branch $Branch
+    if ($LASTEXITCODE -ne 0) { Write-ErrExit "Failed to create local branch $Branch" }
+}
 Write-Host "Pushing to $remoteName/$Branch..."
 git push -u $remoteName $Branch
 if ($LASTEXITCODE -ne 0) { Write-ErrExit "git push failed" }
