@@ -115,6 +115,7 @@ Arguments:
 - `-Message`: Commit message
 - `-CreateRepo`: If `gh` CLI exists, attempts to create a repo and push
 - `-Force`: Force push even if no changes
+- `-UseUserRepo`: Use https://github.com/mert6148/User-login.git as the remote URL (convenience flag)
 
 POSIX shell (Linux, macOS):
 ```

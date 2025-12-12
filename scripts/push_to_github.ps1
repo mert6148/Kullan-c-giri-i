@@ -1,9 +1,13 @@
+## Script: push_to_github.ps1
+## Usage: powershell -File .\push_to_github.ps1 [-RemoteUrl <url>] [-Branch <branch>] [-Message <msg>] [-CreateRepo] [-Force] [-UseUserRepo]
+## -UseUserRepo: use https://github.com/mert6148/User-login.git as the remote URL
 param(
     [string]$RemoteUrl = $env:GIT_REMOTE,
     [string]$Branch = $env:GIT_BRANCH,
     [string]$Message = "Update project files",
     [switch]$CreateRepo,
-    [switch]$Force
+    [switch]$Force,
+    [switch]$UseUserRepo
 )
 
 Set-StrictMode -Version Latest
@@ -24,6 +28,9 @@ if (-not $Branch) {
 }
 
 Write-Host "Using branch: $Branch"
+
+# If user requested the specific repo, use it as RemoteUrl
+if ($UseUserRepo) { $RemoteUrl = 'https://github.com/mert6148/User-login.git' }
 
 if ($CreateRepo -and (Get-Command gh -ErrorAction SilentlyContinue)) {
     Write-Host "Creating repository via gh CLI (if not exists) and adding remote..."
