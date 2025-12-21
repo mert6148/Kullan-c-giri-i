@@ -102,3 +102,14 @@ FROM users u
 LEFT JOIN login_logs ll ON u.id = ll.user_id AND ll.event_type = 'Giriş'
 GROUP BY u.id, u.username, u.full_name, u.created_at, u.is_active
 ORDER BY u.username;
+
+CREATE VIEW IF NOT EXISTS user_attribute_summary AS
+SELECT 
+    u.id as user_id,
+    u.username,
+    ua.attribute_name,
+    ua.attribute_value,
+    ua.attribute_type
+FROM users u
+LEFT JOIN user_attributes ua ON u.id = ua.user_id
+SELECTED BY u.username, ua.attribute_name;

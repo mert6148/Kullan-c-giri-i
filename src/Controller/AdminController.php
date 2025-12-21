@@ -2,77 +2,123 @@
 
 namespace App\Controller;
 
+use App\Service\AdminService;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\Routing\Annotation\Route;
 
 class AdminController extends AbstractController
 {
-    #[Route('/admin', name: 'admin_dashboard')]
-    public function dashboard(Request $request): Response
+    private AdminService $adminService;
+    
+    public function __construct(AdminService $adminService)
     {
-        // Admin doğrulanmış mı?
-        if (!$request->getSession()->get('is_admin')) {
-            return $this->redirectToRoute('admin_login');
-        }
-
-        return $this->render('admin/dashboard.html.twig', [
-            'username' => $request->getSession()->get('admin_username'),
-        ]);
+        $this->adminService = $adminService;
     }
-
-    #[Route('/admin/login', name: 'admin_login')]
-    public function loginForm(): Response
+    
+    #[Route('/admin/login', name: 'admin_login', methods: ['GET', 'POST'])]
+    public function login(Request $request): Response
     {
-        return $this->render('admin/login.html.twig');
-    }
-
-    #[Route('/admin/login/check', name: 'admin_login_check', methods: ['POST'])]
-    public function loginCheck(Request $request): Response
-    {
-        $username = $request->request->get('username');
-        $password = $request->request->get('password');
-
-        // Basit authentication (örnek)
-        if ($username === 'admin' && $password === '12345') {
-            $session = $request->getSession();
-            $session->set('is_admin', true);
-            $session->set('admin_username', $username);
-
+        if ($this->adminService->isAdmin()) {
             return $this->redirectToRoute('admin_dashboard');
         }
-
-        return $this->render('admin/login.html.twig', [
-            'error' => 'Geçersiz kullanıcı adı veya şifre.'
+        
+        if ($request->isMethod('POST')) {
+            $username = $request->request->get('username', '');
+            $password = $request->request->get('password', '');
+            $role = $request->request->get('role', AdminService::ROLE_ADMIN);
+            
+            if ($this->adminService->login($username, $password, $role)) {
+                return $this->redirectToRoute('admin_dashboard');
+            }
+            
+            return $this->render('admin/login.html.twig', [
+                'error' => 'Geçersiz kimlik bilgileri'
+            ]);
+        }
+        
+        return $this->render('admin/login.html.twig');
+    }
+    
+    #[Route('/admin', name: 'admin_dashboard', methods: ['GET'])]
+    #[Route('/admin/dashboard', name: 'admin_dashboard_alt', methods: ['GET'])]
+    public function dashboard(): Response
+    {
+        $this->requireAdmin();
+        
+        return $this->render('admin/dashboard.html.twig', [
+            'session' => $this->adminService->getSessionInfo(),
+            'audit_logs' => $this->adminService->getAuditLogs(20),
+            'permissions' => $this->adminService->getPermissions()
         ]);
     }
-
+    
     #[Route('/admin/logout', name: 'admin_logout')]
-    public function logout(Request $request): Response
+    public function logout(): Response
     {
-        $request->getSession()->clear();
+        $this->adminService->logout();
         return $this->redirectToRoute('admin_login');
     }
-
-    #[Route('/admin/stats', name: 'admin_stats')]
-    public function stats(Request $request): Response
+    
+    #[Route('/admin/session/extend', name: 'admin_extend_session', methods: ['POST'])]
+    public function extendSession(): JsonResponse
     {
-        // Admin doğrulanmış mı?
-        if (!$request->getSession()->get('is_admin')) {
-            return $this->redirectToRoute('admin_login');
-        }
-
-        // İstatistik verilerini al
-        $adminService = $this->container->get('App\Service\AdminService');
-        $stats = $adminService->getSiteStats();
-
-        return $this->render('admin/stats.html.twig', [
-            'stats' => $stats,
-            'name' => $request->getSession()->get('admin_name'),
-            'username' => $request->getSession()->get('admin_username'),
-            'age' => $request->getSession()->get('admin_age'),
-            'email' => $request->getSession()->get('admin_email')
+        $this->requireAdmin();
+        $this->adminService->extendSession();
+        return $this->json(['success' => true]);
+    }
+    
+    #[Route('/admin/users', name: 'admin_users')]
+    public function users(): Response
+    {
+        $this->requireAdmin(AdminService::PERM_USER_MANAGE);
+        return $this->render('admin/users.html.twig');
+    }
+    
+    #[Route('/admin/logs', name: 'admin_logs')]
+    public function logs(Request $request): Response
+    {
+        $this->requireAdmin(AdminService::PERM_VIEW_LOGS);
+        $limit = min((int)$request->query->get('limit', 50), 1000);
+        return $this->render('admin/logs.html.twig', [
+            'logs' => $this->adminService->getAuditLogs($limit)
         ]);
+    }
+    
+    #[Route('/admin/security', name: 'admin_security')]
+    public function security(): Response
+    {
+        $this->requireAdmin(AdminService::PERM_SECURITY);
+        return $this->render('admin/security.html.twig');
+    }
+    
+    #[Route('/admin/database', name: 'admin_database')]
+    public function database(): Response
+    {
+        $this->requireAdmin(AdminService::PERM_DATABASE);
+        return $this->render('admin/database.html.twig');
+    }
+    
+    #[Route('/admin/permissions', name: 'admin_permissions')]
+    public function permissions(): JsonResponse
+    {
+        $this->requireAdmin();
+        return $this->json([
+            'role' => $this->adminService->getAdminRole(),
+            'permissions' => $this->adminService->getPermissions()
+        ]);
+    }
+    
+    private function requireAdmin(string $permission = null): void
+    {
+        if (!$this->adminService->isAdmin()) {
+            throw $this->createAccessDeniedException('Admin erişimi gerekli');
+        }
+        
+        if ($permission && !$this->adminService->hasPermission($permission)) {
+            throw $this->createAccessDeniedException('İzin gerekli');
+        }
     }
 }

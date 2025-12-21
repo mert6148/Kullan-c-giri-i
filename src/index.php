@@ -1,28 +1,16 @@
 <?php
 
-use App\Helpers\TemplateHelper;
-use App\Models\Template;
+// Application entry file. Keep minimal to avoid side-effects during linting.
 
-class Templates
+require_once __DIR__ . '/../vendor/autoload.php';
+
+class App
 {
-    protected $templateHelper;
-
-    public function __construct(TemplateHelper $templateHelper)
+    public function run()
     {
-        $this->templateHelper = $templateHelper;
-    }
-
-    public function getAllTemplates()
-    {
-        return Template::all();
-    }
-
-    public function renderTemplate($templateId, $data)
-    {
-        $template = Template::find($templateId);
-        if ($template) {
-            return $this->templateHelper->render($template->content, $data);
-        }
-        return null;
+        /**
+         * @param Request $request
+         * @param int $userId
+         */
     }
 }

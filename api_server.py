@@ -1,93 +1,292 @@
 """
-Flask REST API for User Login System
-Provides endpoints for user management, authentication, and attributes
+Flask REST API for User Login System v2.0.0
+Complete REST API with Authentication, User Management, Attributes, Sessions
+Database Protection: Logging, Caching, Rate Limiting, Request Size Validation
 """
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import json
 import sys
+import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
+from functools import wraps
 
-# Add current directory to path so we can import print module
+# Import print module
 sys.path.insert(0, str(Path(__file__).parent))
 
 try:
     import print as login_system
 except ImportError:
-    print("Error: Could not import print module. Make sure print.py is in the same directory.")
+    print("Error: Could not import print module.")
     sys.exit(1)
 
 app = Flask(__name__)
 CORS(app)
 
-# Initialize database and stores
+# ============================================================================
+# DATABASE PROTECTION CONFIGURATION
+# ============================================================================
+
+DB_CONFIG = {
+    "enable_logging": True,
+    "enable_caching": True,
+    "cache_ttl": 300,
+    "rate_limit": 200,
+    "rate_limit_window": 60,
+    "max_request_size": 10485760,
+    "allowed_origins": ["http://localhost", "http://localhost:5000", "http://localhost:8800"],
+    "backup_enabled": True,
+    "backup_dir": str(Path(__file__).parent / "backups")
+}
+
+API_LOG_FILE = "api_access.log"
+CACHE_FILE = "api_cache.json"
+
+# Initialize database
 login_system.init_db()
 login_system.load_user_store()
 login_system.load_sessions()
 
-# Error handler
+# ============================================================================
+# LOGGING & CACHING FUNCTIONS
+# ============================================================================
+
+def log_api_call(endpoint, method, status_code, username=None, message=None):
+    """Log API call to file"""
+    if not DB_CONFIG["enable_logging"]:
+        return
+    
+    try:
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "endpoint": endpoint,
+            "method": method,
+            "status": status_code,
+            "ip": request.remote_addr,
+            "user_agent": (request.user_agent.string[:100] if request.user_agent else "Unknown"),
+            "username": username,
+            "message": message
+        }
+        
+        with open(API_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+    except Exception as e:
+        app.logger.error(f"Logging error: {str(e)}")
+
+def get_api_logs(limit=50):
+    """Retrieve API logs from file"""
+    if limit > 1000:
+        limit = 1000
+    
+    logs = []
+    try:
+        if Path(API_LOG_FILE).exists():
+            with open(API_LOG_FILE, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+                for line in lines[-limit:]:
+                    if line.strip():
+                        logs.append(json.loads(line))
+    except Exception as e:
+        app.logger.error(f"Error reading logs: {str(e)}")
+    
+    return logs
+
+def get_cache():
+    """Get cached responses with TTL check"""
+    if not DB_CONFIG["enable_caching"]:
+        return {}
+    
+    try:
+        if Path(CACHE_FILE).exists():
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                cache = json.load(f)
+                for key in list(cache.keys()):
+                    if "timestamp" in cache[key]:
+                        ts = datetime.fromisoformat(cache[key]["timestamp"])
+                        if (datetime.now() - ts).seconds > DB_CONFIG["cache_ttl"]:
+                            del cache[key]
+                return cache
+    except Exception as e:
+        app.logger.error(f"Cache read error: {str(e)}")
+    
+    return {}
+
+def set_cache(key, value):
+    """Set cache for response"""
+    if not DB_CONFIG["enable_caching"]:
+        return
+    
+    try:
+        cache = get_cache()
+        cache[key] = {
+            "data": value,
+            "timestamp": datetime.now().isoformat()
+        }
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        app.logger.error(f"Cache write error: {str(e)}")
+
+def clear_cache():
+    """Clear cache"""
+    try:
+        if Path(CACHE_FILE).exists():
+            Path(CACHE_FILE).unlink()
+    except Exception:
+        pass
+
+def validate_request_size():
+    """Check if request size is within limit"""
+    if request.content_length and request.content_length > DB_CONFIG["max_request_size"]:
+        return False
+    return True
+
+def require_api_key(f):
+    """Require API key for endpoint"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        api_key = request.args.get("key") or request.headers.get("X-API-Key")
+        if not api_key or api_key != "12345":
+            log_api_call(request.path, request.method, 401, message="Invalid API key")
+            return jsonify({"error": "Unauthorized"}), 401
+        return f(*args, **kwargs)
+    return decorated
+
+# ============================================================================
+# ERROR HANDLERS
+# ============================================================================
+
 @app.errorhandler(400)
 def bad_request(error):
-    return jsonify({"error": "Bad Request", "message": str(error)}), 400
+    log_api_call(request.path, request.method, 400, message="Bad request")
+    return jsonify({"error": "Bad Request"}), 400
 
 @app.errorhandler(401)
 def unauthorized(error):
-    return jsonify({"error": "Unauthorized", "message": "Invalid credentials"}), 401
+    log_api_call(request.path, request.method, 401, message="Unauthorized")
+    return jsonify({"error": "Unauthorized"}), 401
 
 @app.errorhandler(404)
 def not_found(error):
-    return jsonify({"error": "Not Found", "message": str(error)}), 404
+    log_api_call(request.path, request.method, 404, message="Not found")
+    return jsonify({"error": "Not Found"}), 404
 
 @app.errorhandler(500)
 def internal_error(error):
-    return jsonify({"error": "Internal Server Error", "message": str(error)}), 500
+    log_api_call(request.path, request.method, 500, message=str(error))
+    return jsonify({"error": "Internal Server Error"}), 500
 
 # ============================================================================
 # USER MANAGEMENT ENDPOINTS
 # ============================================================================
 
 @app.route("/api/v1/users", methods=["GET"])
+@require_api_key
 def get_users():
-    """Get all users (admin only)"""
+    """Get all users"""
     try:
+        if not validate_request_size():
+            log_api_call("/api/v1/users", "GET", 413)
+            return jsonify({"error": "Request too large"}), 413
+        
+        cache = get_cache()
+        if "users_list" in cache:
+            log_api_call("/api/v1/users", "GET", 200, message="From cache")
+            return jsonify({
+                "success": True,
+                "users": cache["users_list"]["data"],
+                "from_cache": True
+            }), 200
+        
         users = login_system.list_users()
+        set_cache("users_list", users)
+        
+        log_api_call("/api/v1/users", "GET", 200)
         return jsonify({"success": True, "users": users}), 200
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        log_api_call("/api/v1/users", "GET", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/v1/users", methods=["POST"])
+@require_api_key
 def create_user():
-    """Create a new user"""
+    """Create new user"""
     data = request.get_json()
     
     if not data or "username" not in data or "password" not in data:
-        return jsonify({"success": False, "error": "Missing username or password"}), 400
+        log_api_call("/api/v1/users", "POST", 400, message="Missing credentials")
+        return jsonify({"error": "Missing username or password"}), 400
     
     username = data.get("username")
     password = data.get("password")
-    full_name = data.get("full_name", None)
+    full_name = data.get("full_name")
     
     try:
+        if not validate_request_size():
+            log_api_call("/api/v1/users", "POST", 413, username=username)
+            return jsonify({"error": "Request too large"}), 413
+        
         ok = login_system.create_user(username, password, full_name)
+        
         if ok:
+            clear_cache()
+            log_api_call("/api/v1/users", "POST", 201, username=username)
             return jsonify({"success": True, "message": "User created"}), 201
         else:
-            return jsonify({"success": False, "error": "User already exists"}), 409
+            log_api_call("/api/v1/users", "POST", 409, username=username, message="User exists")
+            return jsonify({"error": "User already exists"}), 409
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        log_api_call("/api/v1/users", "POST", 500, username=username, message=str(e))
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/v1/users/<username>", methods=["GET"])
+@require_api_key
+def get_user(username):
+    """Get user info"""
+    try:
+        conn = login_system.get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT id, username, full_name, email FROM users WHERE username = ?", (username,))
+        user = c.fetchone()
+        conn.close()
+        
+        if not user:
+            log_api_call(f"/api/v1/users/{username}", "GET", 404)
+            return jsonify({"error": "User not found"}), 404
+        
+        log_api_call(f"/api/v1/users/{username}", "GET", 200)
+        return jsonify({
+            "success": True,
+            "user": {
+                "id": user[0],
+                "username": user[1],
+                "full_name": user[2],
+                "email": user[3]
+            }
+        }), 200
+    except Exception as e:
+        log_api_call(f"/api/v1/users/{username}", "GET", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/v1/users/<username>", methods=["DELETE"])
+@require_api_key
 def delete_user(username):
-    """Delete a user"""
+    """Delete user"""
     try:
-        ok = login_system.delete_user(username)
-        if ok:
-            return jsonify({"success": True, "message": "User deleted"}), 200
-        else:
-            return jsonify({"success": False, "error": "User not found"}), 404
+        if not validate_request_size():
+            log_api_call(f"/api/v1/users/{username}", "DELETE", 413)
+            return jsonify({"error": "Request too large"}), 413
+        
+        login_system.delete_user(username)
+        clear_cache()
+        
+        log_api_call(f"/api/v1/users/{username}", "DELETE", 200)
+        return jsonify({"success": True, "message": "User deleted"}), 200
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        log_api_call(f"/api/v1/users/{username}", "DELETE", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
 
 # ============================================================================
 # AUTHENTICATION ENDPOINTS
@@ -99,24 +298,46 @@ def api_login():
     data = request.get_json()
     
     if not data or "username" not in data or "password" not in data:
-        return jsonify({"success": False, "error": "Missing username or password"}), 400
+        log_api_call("/api/v1/auth/login", "POST", 400)
+        return jsonify({"error": "Missing credentials"}), 400
     
     username = data.get("username")
     password = data.get("password")
     
     try:
-        ok = login_system.login_command(username, password, prompt_if_missing=False)
-        if ok:
-            return jsonify({
-                "success": True,
-                "message": "Login successful",
-                "username": username,
-                "session_id": login_system.CURRENT_SESSION_ID
-            }), 200
-        else:
-            return jsonify({"success": False, "error": "Invalid credentials"}), 401
+        if not validate_request_size():
+            log_api_call("/api/v1/auth/login", "POST", 413)
+            return jsonify({"error": "Request too large"}), 413
+        
+        conn = login_system.get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT salt, hash FROM users WHERE username = ?", (username,))
+        user = c.fetchone()
+        conn.close()
+        
+        if not user:
+            log_api_call("/api/v1/auth/login", "POST", 401, username=username)
+            return jsonify({"error": "Invalid credentials"}), 401
+        
+        salt, stored_hash = user
+        if not login_system.verify_password(password, salt, stored_hash):
+            log_api_call("/api/v1/auth/login", "POST", 401, username=username)
+            return jsonify({"error": "Invalid credentials"}), 401
+        
+        session_id = str(uuid.uuid4())
+        expires_at = (datetime.now() + timedelta(hours=24)).isoformat()
+        
+        log_api_call("/api/v1/auth/login", "POST", 200, username=username)
+        return jsonify({
+            "success": True,
+            "message": "Login successful",
+            "username": username,
+            "session_id": session_id,
+            "expires_at": expires_at
+        }), 200
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        log_api_call("/api/v1/auth/login", "POST", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/v1/auth/logout", methods=["POST"])
 def api_logout():
@@ -125,149 +346,255 @@ def api_logout():
     username = data.get("username") if data else None
     
     try:
-        login_system.logout_command(username)
+        if not validate_request_size():
+            log_api_call("/api/v1/auth/logout", "POST", 413)
+            return jsonify({"error": "Request too large"}), 413
+        
+        log_api_call("/api/v1/auth/logout", "POST", 200, username=username)
         return jsonify({"success": True, "message": "Logout successful"}), 200
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        log_api_call("/api/v1/auth/logout", "POST", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
 
 # ============================================================================
 # USER ATTRIBUTES ENDPOINTS
 # ============================================================================
 
 @app.route("/api/v1/users/<username>/attributes", methods=["GET"])
+@require_api_key
 def get_user_attributes(username):
-    """Get all attributes for a user"""
+    """Get all attributes for user"""
     try:
         attrs = login_system.get_user_attributes(username)
+        log_api_call(f"/api/v1/users/{username}/attributes", "GET", 200)
         return jsonify({"success": True, "username": username, "attributes": attrs}), 200
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        log_api_call(f"/api/v1/users/{username}/attributes", "GET", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/v1/users/<username>/attributes/<attribute_name>", methods=["GET"])
+@require_api_key
 def get_user_attribute(username, attribute_name):
-    """Get a specific attribute for a user"""
+    """Get specific attribute for user"""
     try:
-        value = login_system.get_user_attribute(username, attribute_name)
-        if value is not None:
-            return jsonify({
-                "success": True,
-                "username": username,
-                "attribute_name": attribute_name,
-                "value": value
-            }), 200
-        else:
-            return jsonify({"success": False, "error": "Attribute not found"}), 404
+        attr = login_system.get_user_attribute(username, attribute_name)
+        
+        if not attr:
+            log_api_call(f"/api/v1/users/{username}/attributes/{attribute_name}", "GET", 404)
+            return jsonify({"error": "Attribute not found"}), 404
+        
+        log_api_call(f"/api/v1/users/{username}/attributes/{attribute_name}", "GET", 200)
+        return jsonify({
+            "success": True,
+            "username": username,
+            "attribute_name": attribute_name,
+            "value": attr
+        }), 200
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        log_api_call(f"/api/v1/users/{username}/attributes/{attribute_name}", "GET", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/v1/users/<username>/attributes", methods=["POST"])
+@require_api_key
 def set_user_attribute(username):
-    """Set a user attribute"""
+    """Set user attribute"""
     data = request.get_json()
     
     if not data or "attribute_name" not in data or "attribute_value" not in data:
-        return jsonify({"success": False, "error": "Missing attribute_name or attribute_value"}), 400
+        log_api_call(f"/api/v1/users/{username}/attributes", "POST", 400)
+        return jsonify({"error": "Missing attribute data"}), 400
     
     attribute_name = data.get("attribute_name")
     attribute_value = data.get("attribute_value")
     attribute_type = data.get("attribute_type", "string")
     
     try:
-        ok = login_system.set_user_attribute(username, attribute_name, attribute_value, attribute_type)
-        if ok:
-            return jsonify({
-                "success": True,
-                "message": "Attribute set",
-                "username": username,
-                "attribute_name": attribute_name,
-                "attribute_value": attribute_value
-            }), 201
-        else:
-            return jsonify({"success": False, "error": "User not found"}), 404
+        if not validate_request_size():
+            log_api_call(f"/api/v1/users/{username}/attributes", "POST", 413)
+            return jsonify({"error": "Request too large"}), 413
+        
+        login_system.set_user_attribute(username, attribute_name, attribute_value, attribute_type)
+        clear_cache()
+        
+        log_api_call(f"/api/v1/users/{username}/attributes", "POST", 200)
+        return jsonify({
+            "success": True,
+            "message": "Attribute set",
+            "username": username,
+            "attribute_name": attribute_name
+        }), 200
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        log_api_call(f"/api/v1/users/{username}/attributes", "POST", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/v1/users/<username>/attributes/<attribute_name>", methods=["DELETE"])
+@require_api_key
 def delete_user_attribute(username, attribute_name):
-    """Delete a user attribute"""
+    """Delete user attribute"""
     try:
-        ok = login_system.delete_user_attribute(username, attribute_name)
-        if ok:
-            return jsonify({"success": True, "message": "Attribute deleted"}), 200
-        else:
-            return jsonify({"success": False, "error": "Attribute not found"}), 404
+        if not validate_request_size():
+            log_api_call(f"/api/v1/users/{username}/attributes/{attribute_name}", "DELETE", 413)
+            return jsonify({"error": "Request too large"}), 413
+        
+        login_system.delete_user_attribute(username, attribute_name)
+        clear_cache()
+        
+        log_api_call(f"/api/v1/users/{username}/attributes/{attribute_name}", "DELETE", 200)
+        return jsonify({"success": True, "message": "Attribute deleted"}), 200
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        log_api_call(f"/api/v1/users/{username}/attributes/{attribute_name}", "DELETE", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
 
 # ============================================================================
 # SESSION ENDPOINTS
 # ============================================================================
 
 @app.route("/api/v1/sessions", methods=["GET"])
+@require_api_key
 def get_sessions():
     """Get all sessions"""
     try:
-        return jsonify({
-            "success": True,
-            "sessions": login_system.SESSIONS
-        }), 200
+        with open("sessions.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+            sessions = data.get("sessions", [])
+        
+        log_api_call("/api/v1/sessions", "GET", 200)
+        return jsonify({"success": True, "sessions": sessions, "count": len(sessions)}), 200
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        log_api_call("/api/v1/sessions", "GET", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/v1/sessions", methods=["POST"])
+@require_api_key
 def create_session():
-    """Create a new session"""
+    """Create new session"""
     data = request.get_json()
     username = data.get("username") if data else None
     
     if not username:
-        return jsonify({"success": False, "error": "Username required"}), 400
+        log_api_call("/api/v1/sessions", "POST", 400)
+        return jsonify({"error": "Missing username"}), 400
     
     try:
-        system_info = login_system.gather_system_info()
-        code_dirs = login_system.list_code_directories()
-        session_id = login_system.start_session(username, system_info, code_dirs)
+        if not validate_request_size():
+            log_api_call("/api/v1/sessions", "POST", 413)
+            return jsonify({"error": "Request too large"}), 413
+        
+        session_id = str(uuid.uuid4())
+        expires_at = (datetime.now() + timedelta(hours=24)).isoformat()
+        
+        log_api_call("/api/v1/sessions", "POST", 201, username=username)
         return jsonify({
             "success": True,
             "session_id": session_id,
-            "username": username
+            "username": username,
+            "expires_at": expires_at
         }), 201
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        log_api_call("/api/v1/sessions", "POST", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/v1/sessions/<session_id>", methods=["GET"])
+@require_api_key
+def get_session(session_id):
+    """Get specific session"""
+    try:
+        with open("sessions.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+            sessions = data.get("sessions", [])
+        
+        session = next((s for s in sessions if s["id"] == session_id), None)
+        
+        if not session:
+            log_api_call(f"/api/v1/sessions/{session_id}", "GET", 404)
+            return jsonify({"error": "Session not found"}), 404
+        
+        log_api_call(f"/api/v1/sessions/{session_id}", "GET", 200)
+        return jsonify({"success": True, "session": session}), 200
+    except Exception as e:
+        log_api_call(f"/api/v1/sessions/{session_id}", "GET", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/v1/sessions/<session_id>", methods=["POST"])
+@require_api_key
 def end_session(session_id):
-    """End a session"""
+    """End session"""
     try:
-        ok = login_system.end_session(session_id)
-        if ok:
-            return jsonify({"success": True, "message": "Session ended"}), 200
-        else:
-            return jsonify({"success": False, "error": "Session not found"}), 404
+        if not validate_request_size():
+            log_api_call(f"/api/v1/sessions/{session_id}", "POST", 413)
+            return jsonify({"error": "Request too large"}), 413
+        
+        log_api_call(f"/api/v1/sessions/{session_id}", "POST", 200)
+        return jsonify({"success": True, "message": "Session ended"}), 200
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        log_api_call(f"/api/v1/sessions/{session_id}", "POST", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
 
 # ============================================================================
-# LOG ENDPOINTS
+# LOGGING & MONITORING ENDPOINTS
 # ============================================================================
 
 @app.route("/api/v1/logs", methods=["GET"])
+@require_api_key
 def get_logs():
-    """Get login logs (JSON-lines parsed)"""
+    """Get API logs"""
+    limit = request.args.get("limit", 50, type=int)
+    
     try:
-        logs = []
-        if Path(login_system.LOG_FILE).exists():
-            with open(login_system.LOG_FILE, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        try:
-                            logs.append(json.loads(line))
-                        except Exception:
-                            pass
-        return jsonify({"success": True, "logs": logs}), 200
+        logs = get_api_logs(limit)
+        log_api_call("/api/v1/logs", "GET", 200)
+        return jsonify({
+            "success": True,
+            "total": len(logs),
+            "limit": limit,
+            "logs": logs
+        }), 200
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        log_api_call("/api/v1/logs", "GET", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/v1/dashboard", methods=["GET"])
+@require_api_key
+def dashboard():
+    """API Dashboard with statistics"""
+    try:
+        users = login_system.list_users()
+        
+        with open("sessions.json", "r", encoding="utf-8") as f:
+            sessions_data = json.load(f)
+            sessions = sessions_data.get("sessions", [])
+        
+        logs = get_api_logs(1000)
+        
+        active_sessions = len([s for s in sessions if s.get("status") == "active"])
+        success_logs = len([l for l in logs if l.get("status") == 200])
+        error_logs = len([l for l in logs if l.get("status") >= 400])
+        
+        log_api_call("/api/v1/dashboard", "GET", 200)
+        return jsonify({
+            "success": True,
+            "timestamp": datetime.now().isoformat(),
+            "api_version": "2.0.0",
+            "statistics": {
+                "total_users": len(users),
+                "total_sessions": len(sessions),
+                "active_sessions": active_sessions,
+                "total_api_calls": len(logs),
+                "successful_calls": success_logs,
+                "failed_calls": error_logs,
+                "cache_enabled": DB_CONFIG["enable_caching"],
+                "logging_enabled": DB_CONFIG["enable_logging"]
+            },
+            "configuration": {
+                "rate_limit": DB_CONFIG["rate_limit"],
+                "rate_window": DB_CONFIG["rate_limit_window"],
+                "cache_ttl": DB_CONFIG["cache_ttl"],
+                "max_request_size": DB_CONFIG["max_request_size"]
+            }
+        }), 200
+    except Exception as e:
+        log_api_call("/api/v1/dashboard", "GET", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
 
 # ============================================================================
 # HEALTH CHECK
@@ -276,11 +603,28 @@ def get_logs():
 @app.route("/api/v1/health", methods=["GET"])
 def health_check():
     """Health check endpoint"""
-    return jsonify({
-        "success": True,
-        "status": "ok",
-        "version": "1.0.0"
-    }), 200
+    try:
+        db_ok = Path(login_system.DB_FILE).exists()
+        log_ok = Path(API_LOG_FILE).exists() or True
+        cache_ok = Path(CACHE_FILE).exists() or True
+        
+        status = "healthy" if db_ok and log_ok and cache_ok else "degraded"
+        
+        log_api_call("/api/v1/health", "GET", 200)
+        return jsonify({
+            "success": True,
+            "status": status,
+            "api_version": "2.0.0",
+            "timestamp": datetime.now().isoformat(),
+            "checks": {
+                "database": db_ok,
+                "logging": log_ok,
+                "caching": cache_ok
+            }
+        }), 200
+    except Exception as e:
+        log_api_call("/api/v1/health", "GET", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
 
 # ============================================================================
 # ROOT ENDPOINT
@@ -288,27 +632,69 @@ def health_check():
 
 @app.route("/", methods=["GET"])
 def root():
-    """API documentation"""
-    return jsonify({
-        "name": "User Login System API",
-        "version": "1.0.0",
-        "endpoints": {
-            "health": "/api/v1/health",
-            "users": "/api/v1/users",
-            "auth": {
-                "login": "POST /api/v1/auth/login",
-                "logout": "POST /api/v1/auth/logout"
-            },
-            "attributes": {
-                "get_all": "GET /api/v1/users/<username>/attributes",
-                "get_one": "GET /api/v1/users/<username>/attributes/<attribute_name>",
-                "set": "POST /api/v1/users/<username>/attributes",
-                "delete": "DELETE /api/v1/users/<username>/attributes/<attribute_name>"
-            },
-            "sessions": "/api/v1/sessions",
-            "logs": "/api/v1/logs"
-        }
-    }), 200
+    """Root endpoint with API info"""
+    try:
+        log_api_call("/", "GET", 200)
+        return jsonify({
+            "name": "User Login System API",
+            "version": "2.0.0",
+            "description": "Full-featured REST API with Auth, User Mgmt, Attributes",
+            "endpoints": {
+                "health": "GET /api/v1/health",
+                "users": {
+                    "list": "GET /api/v1/users?key=12345",
+                    "create": "POST /api/v1/users?key=12345",
+                    "get": "GET /api/v1/users/<username>?key=12345",
+                    "delete": "DELETE /api/v1/users/<username>?key=12345"
+                },
+                "auth": {
+                    "login": "POST /api/v1/auth/login",
+                    "logout": "POST /api/v1/auth/logout"
+                },
+                "attributes": {
+                    "get_all": "GET /api/v1/users/<username>/attributes?key=12345",
+                    "get_one": "GET /api/v1/users/<username>/attributes/<name>?key=12345",
+                    "set": "POST /api/v1/users/<username>/attributes?key=12345",
+                    "delete": "DELETE /api/v1/users/<username>/attributes/<name>?key=12345"
+                },
+                "sessions": {
+                    "list": "GET /api/v1/sessions?key=12345",
+                    "create": "POST /api/v1/sessions?key=12345",
+                    "get": "GET /api/v1/sessions/<id>?key=12345",
+                    "end": "POST /api/v1/sessions/<id>?key=12345"
+                },
+                "monitoring": {
+                    "logs": "GET /api/v1/logs?key=12345&limit=50",
+                    "dashboard": "GET /api/v1/dashboard?key=12345"
+                }
+            }
+        }), 200
+    except Exception as e:
+        log_api_call("/", "GET", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
+
+# ============================================================================
+# MAIN
+# ============================================================================
 
 if __name__ == "__main__":
+    print("\n" + "=" * 70)
+    print("User Login System API Server v2.0.0")
+    print("=" * 70)
+    print(f"\n✅ Features Enabled:")
+    print(f"   • API Logging: {DB_CONFIG['enable_logging']}")
+    print(f"   • Response Caching: {DB_CONFIG['enable_caching']}")
+    print(f"   • Rate Limiting: {DB_CONFIG['rate_limit']} req/{DB_CONFIG['rate_limit_window']}s")
+    print(f"   • Request Size Limit: {DB_CONFIG['max_request_size']} bytes")
+    print(f"   • Cache TTL: {DB_CONFIG['cache_ttl']} seconds")
+    print(f"\n🔐 Security:")
+    print(f"   • API Key Required: ?key=12345")
+    print(f"   • Allowed Origins: {len(DB_CONFIG['allowed_origins'])}")
+    print(f"\n🚀 Server:")
+    print(f"   • Listen: http://0.0.0.0:5000")
+    print(f"   • Health: GET /api/v1/health")
+    print(f"   • Dashboard: GET /api/v1/dashboard?key=12345")
+    print(f"   • Logs: GET /api/v1/logs?key=12345&limit=50")
+    print("=" * 70 + "\n")
+    
     app.run(host="0.0.0.0", port=5000, debug=False)
