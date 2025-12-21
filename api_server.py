@@ -22,6 +22,14 @@ except ImportError:
     print("Error: Could not import print module.")
     sys.exit(1)
 
+# Import Admin Controller
+try:
+    from admin_controller import AdminController, get_admin_controller, PERM_USER_MANAGE, PERM_VIEW_LOGS
+    ADMIN_CONTROLLER_AVAILABLE = True
+except ImportError:
+    print("Warning: Admin Controller not available.")
+    ADMIN_CONTROLLER_AVAILABLE = False
+
 app = Flask(__name__)
 CORS(app)
 
@@ -151,6 +159,30 @@ def require_api_key(f):
         if not api_key or api_key != "12345":
             log_api_call(request.path, request.method, 401, message="Invalid API key")
             return jsonify({"error": "Unauthorized"}), 401
+        return f(*args, **kwargs)
+    return decorated
+
+def require_admin_session(f):
+    """Require admin session for endpoint"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not ADMIN_CONTROLLER_AVAILABLE:
+            return jsonify({"error": "Admin Controller not available"}), 503
+        
+        session_id = request.headers.get("X-Admin-Session") or request.args.get("session_id")
+        if not session_id:
+            log_api_call(request.path, request.method, 401, message="Missing admin session")
+            return jsonify({"error": "Admin session required"}), 401
+        
+        admin_controller = get_admin_controller()
+        is_valid, session = admin_controller.validate_session(session_id)
+        
+        if not is_valid:
+            log_api_call(request.path, request.method, 401, message="Invalid admin session")
+            return jsonify({"error": "Invalid or expired session"}), 401
+        
+        request.admin_session = session
+        request.admin_session_id = session_id
         return f(*args, **kwargs)
     return decorated
 
@@ -630,44 +662,207 @@ def health_check():
 # ROOT ENDPOINT
 # ============================================================================
 
+# ============================================================================
+# ADMIN ENDPOINTS
+# ============================================================================
+
+@app.route("/api/v1/admin/login", methods=["POST"])
+def admin_login():
+    """Admin login endpoint"""
+    if not ADMIN_CONTROLLER_AVAILABLE:
+        return jsonify({"error": "Admin Controller not available"}), 503
+    
+    data = request.get_json()
+    if not data or "username" not in data or "password" not in data:
+        return jsonify({"error": "Missing credentials"}), 400
+    
+    username = data.get("username")
+    password = data.get("password")
+    role = data.get("role", "admin")
+    
+    try:
+        admin_controller = get_admin_controller()
+        success, session_id, error = admin_controller.login(username, password, role)
+        
+        if success:
+            log_api_call("/api/v1/admin/login", "POST", 200, username=username)
+            return jsonify({
+                "success": True,
+                "message": "Admin login successful",
+                "session_id": session_id,
+                "username": username,
+                "role": role
+            }), 200
+        else:
+            log_api_call("/api/v1/admin/login", "POST", 401, username=username, message=error)
+            return jsonify({"error": error or "Login failed"}), 401
+    except Exception as e:
+        log_api_call("/api/v1/admin/login", "POST", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/v1/admin/logout", methods=["POST"])
+@require_admin_session
+def admin_logout():
+    """Admin logout endpoint"""
+    try:
+        admin_controller = get_admin_controller()
+        success = admin_controller.logout(request.admin_session_id)
+        
+        if success:
+            log_api_call("/api/v1/admin/logout", "POST", 200)
+            return jsonify({"success": True, "message": "Logout successful"}), 200
+        else:
+            return jsonify({"error": "Logout failed"}), 400
+    except Exception as e:
+        log_api_call("/api/v1/admin/logout", "POST", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/v1/admin/users", methods=["GET"])
+@require_admin_session
+def admin_get_users():
+    """Admin: Get all users"""
+    try:
+        limit = request.args.get("limit", 100, type=int)
+        admin_controller = get_admin_controller()
+        success, users, error = admin_controller.get_users(request.admin_session_id, limit)
+        
+        if success:
+            log_api_call("/api/v1/admin/users", "GET", 200)
+            return jsonify({"success": True, "users": users, "count": len(users)}), 200
+        else:
+            return jsonify({"error": error}), 403
+    except Exception as e:
+        log_api_call("/api/v1/admin/users", "GET", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/v1/admin/users", methods=["POST"])
+@require_admin_session
+def admin_create_user():
+    """Admin: Create user"""
+    data = request.get_json()
+    if not data or "username" not in data or "password" not in data:
+        return jsonify({"error": "Missing username or password"}), 400
+    
+    try:
+        admin_controller = get_admin_controller()
+        success, error = admin_controller.create_user(
+            request.admin_session_id,
+            data.get("username"),
+            data.get("password"),
+            data.get("full_name"),
+            data.get("email")
+        )
+        
+        if success:
+            log_api_call("/api/v1/admin/users", "POST", 201)
+            return jsonify({"success": True, "message": "User created"}), 201
+        else:
+            return jsonify({"error": error}), 400
+    except Exception as e:
+        log_api_call("/api/v1/admin/users", "POST", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/v1/admin/users/<username>", methods=["DELETE"])
+@require_admin_session
+def admin_delete_user(username):
+    """Admin: Delete user"""
+    try:
+        admin_controller = get_admin_controller()
+        success, error = admin_controller.delete_user(request.admin_session_id, username)
+        
+        if success:
+            log_api_call(f"/api/v1/admin/users/{username}", "DELETE", 200)
+            return jsonify({"success": True, "message": "User deleted"}), 200
+        else:
+            return jsonify({"error": error}), 400
+    except Exception as e:
+        log_api_call(f"/api/v1/admin/users/{username}", "DELETE", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/v1/admin/audit-logs", methods=["GET"])
+@require_admin_session
+def admin_get_audit_logs():
+    """Admin: Get audit logs"""
+    try:
+        limit = request.args.get("limit", 50, type=int)
+        admin_controller = get_admin_controller()
+        success, logs, error = admin_controller.get_audit_logs(request.admin_session_id, limit)
+        
+        if success:
+            log_api_call("/api/v1/admin/audit-logs", "GET", 200)
+            return jsonify({"success": True, "logs": logs, "count": len(logs)}), 200
+        else:
+            return jsonify({"error": error}), 403
+    except Exception as e:
+        log_api_call("/api/v1/admin/audit-logs", "GET", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/v1/admin/stats", methods=["GET"])
+@require_admin_session
+def admin_get_stats():
+    """Admin: Get system statistics"""
+    try:
+        admin_controller = get_admin_controller()
+        success, stats, error = admin_controller.get_system_stats(request.admin_session_id)
+        
+        if success:
+            log_api_call("/api/v1/admin/stats", "GET", 200)
+            return jsonify({"success": True, "stats": stats}), 200
+        else:
+            return jsonify({"error": error}), 403
+    except Exception as e:
+        log_api_call("/api/v1/admin/stats", "GET", 500, message=str(e))
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/", methods=["GET"])
 def root():
     """Root endpoint with API info"""
     try:
         log_api_call("/", "GET", 200)
+        endpoints = {
+            "health": "GET /api/v1/health",
+            "users": {
+                "list": "GET /api/v1/users?key=12345",
+                "create": "POST /api/v1/users?key=12345",
+                "get": "GET /api/v1/users/<username>?key=12345",
+                "delete": "DELETE /api/v1/users/<username>?key=12345"
+            },
+            "auth": {
+                "login": "POST /api/v1/auth/login",
+                "logout": "POST /api/v1/auth/logout"
+            },
+            "admin": {
+                "login": "POST /api/v1/admin/login",
+                "logout": "POST /api/v1/admin/logout (X-Admin-Session header required)",
+                "users": "GET /api/v1/admin/users (X-Admin-Session header required)",
+                "create_user": "POST /api/v1/admin/users (X-Admin-Session header required)",
+                "delete_user": "DELETE /api/v1/admin/users/<username> (X-Admin-Session header required)",
+                "audit_logs": "GET /api/v1/admin/audit-logs (X-Admin-Session header required)",
+                "stats": "GET /api/v1/admin/stats (X-Admin-Session header required)"
+            },
+            "attributes": {
+                "get_all": "GET /api/v1/users/<username>/attributes?key=12345",
+                "get_one": "GET /api/v1/users/<username>/attributes/<name>?key=12345",
+                "set": "POST /api/v1/users/<username>/attributes?key=12345",
+                "delete": "DELETE /api/v1/users/<username>/attributes/<name>?key=12345"
+            },
+            "sessions": {
+                "list": "GET /api/v1/sessions?key=12345",
+                "create": "POST /api/v1/sessions?key=12345",
+                "get": "GET /api/v1/sessions/<id>?key=12345",
+                "end": "POST /api/v1/sessions/<id>?key=12345"
+            },
+            "monitoring": {
+                "logs": "GET /api/v1/logs?key=12345&limit=50",
+                "dashboard": "GET /api/v1/dashboard?key=12345"
+            }
+        }
+        
         return jsonify({
             "name": "User Login System API",
             "version": "2.0.0",
-            "description": "Full-featured REST API with Auth, User Mgmt, Attributes",
-            "endpoints": {
-                "health": "GET /api/v1/health",
-                "users": {
-                    "list": "GET /api/v1/users?key=12345",
-                    "create": "POST /api/v1/users?key=12345",
-                    "get": "GET /api/v1/users/<username>?key=12345",
-                    "delete": "DELETE /api/v1/users/<username>?key=12345"
-                },
-                "auth": {
-                    "login": "POST /api/v1/auth/login",
-                    "logout": "POST /api/v1/auth/logout"
-                },
-                "attributes": {
-                    "get_all": "GET /api/v1/users/<username>/attributes?key=12345",
-                    "get_one": "GET /api/v1/users/<username>/attributes/<name>?key=12345",
-                    "set": "POST /api/v1/users/<username>/attributes?key=12345",
-                    "delete": "DELETE /api/v1/users/<username>/attributes/<name>?key=12345"
-                },
-                "sessions": {
-                    "list": "GET /api/v1/sessions?key=12345",
-                    "create": "POST /api/v1/sessions?key=12345",
-                    "get": "GET /api/v1/sessions/<id>?key=12345",
-                    "end": "POST /api/v1/sessions/<id>?key=12345"
-                },
-                "monitoring": {
-                    "logs": "GET /api/v1/logs?key=12345&limit=50",
-                    "dashboard": "GET /api/v1/dashboard?key=12345"
-                }
-            }
+            "description": "Full-featured REST API with Auth, User Mgmt, Attributes, Admin Control",
+            "endpoints": endpoints
         }), 200
     except Exception as e:
         log_api_call("/", "GET", 500, message=str(e))
