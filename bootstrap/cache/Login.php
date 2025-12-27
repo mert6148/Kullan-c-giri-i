@@ -5,15 +5,7 @@ namespace App\Cache;
 use Symfony\Component\Cache\Adapter\FilesystemAdapter;
 use Symfony\Component\Cache\Traits\FilesystemProxy;
 use Symfony\Component\Cache\Traits\RedisProxy;
-use Symfony\Component\Cache\Traits\MemcachedProxy;
-use Symfony\Component\Cache\Traits\MemcacheProxy;
-use Symfony\Component\Cache\Traits\MemcacheDProxy;
 use Symfony\Component\Cache\Traits\MemcacheIProxy;
-use Symfony\Component\Cache\Traits\MemcacheI2Proxy;
-use Symfony\Component\Cache\Traits\MemcacheI3Proxy;
-use Symfony\Component\Cache\Traits\MemcacheI4Proxy;
-use Symfony\Component\Cache\Traits\MemcacheI5Proxy;
-use Symfony\Component\Cache\Traits\MemcacheI6Proxy;
 
 class Login
 {
@@ -132,6 +124,20 @@ class Login
             <button onclick="register()">Register</button>
             <button onclick="forgotPassword()">Forgot Password</button>
         </footer>
+
+        <aside>
+            <p>Copyright 2025 Login System</p>
+            <button onclick="login()">Login</button>
+            <button onclick="logout()">Logout</button>
+            <button onclick="register()">Register</button>
+            <button onclick="forgotPassword()">Forgot Password</button>
+        </aside>
+    </div>
+
+    <div class="copyright">
+        <div idate="container">
+
+        </div>
     </div>
 </body>
 </html>

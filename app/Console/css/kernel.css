@@ -1,0 +1,29 @@
+*{
+    margin: auto;
+    background-origin: padding-box;
+    vertical-align: top;
+}
+
+html,
+body{
+    align-self: start;
+    visibility: hidden;
+    background-color: aqua;
+}
+
+div{
+    empty-cells: show;
+    color: #55cb0c;
+    font: 1em sans-serif;
+    animation-direction: alternate-reverse;
+    aspect-ratio: calc(255, 588, 100, 1);
+}
+
+h1{
+    background-color: #55cb0c;
+}
+
+p{
+    align-self: start;
+    box-decoration-break: var(#55cb0c);
+}

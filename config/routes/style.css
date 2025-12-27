@@ -1,0 +1,99 @@
+/* Genel ayarlar */
+:root {
+    --bg: #f5f7fa;
+    --card: #ffffff;
+    --primary: #3b82f6;
+    --danger: #ef4444;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 2rem;
+}
+
+/* Başlıklar */
+h1 {
+    margin-bottom: 2rem;
+    color: var(--primary);
+}
+
+h2 {
+    margin-top: 3rem;
+    margin-bottom: 1rem;
+    border-left: 4px solid var(--primary);
+    padding-left: 0.75rem;
+}
+
+/* Liste düzeni */
+ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 1rem;
+}
+
+/* Kart görünümü */
+ul li {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+ul li:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+}
+
+/* Linkler */
+ul li a {
+    display: block;
+    padding: 0.75rem 1rem;
+    color: var(--text);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+ul li a:hover {
+    color: var(--primary);
+}
+
+/* Admin linklerini ayır */
+a[href^="/admin"] {
+    color: #7c3aed;
+}
+
+/* Delete / Destroy gibi riskli route'lar */
+a[href*="delete"],
+a[href*="destroy"] {
+    color: var(--danger);
+}
+
+/* Aktif link */
+a.active {
+    background: rgba(59, 130, 246, 0.08);
+    border-radius: 8px;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    body {
+        padding: 1rem;
+    }
+
+    ul {
+        grid-template-columns: 1fr;
+    }
+}
